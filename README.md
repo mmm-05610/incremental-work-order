@@ -64,8 +64,9 @@ claude plugin marketplace add mmm-05610/incremental-work-order
 claude plugin install incremental-work-order@incremental-work-order
 ```
 
-`claude plugin details incremental-work-order` reports `Skills (1)`, with roughly 150 tokens always-on and
-~1.9k on invoke. `claude plugin update incremental-work-order` picks up new releases.
+`claude plugin details incremental-work-order` reports `Skills (1)`. Loading stays proportional: only the
+name and description are resident; the full `SKILL.md` loads when the skill triggers.
+`claude plugin update incremental-work-order` picks up new releases.
 
 **2. The install script** — any agent, no dependencies beyond git and a POSIX shell:
 

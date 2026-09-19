@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for its skill contract: a breaking change is one that
 invalidates an existing order, charter or ledger, or that changes what a conforming order must contain.
 
+## [Unreleased]
+
+### Fixed
+
+- **Docs cross-check fixes (no behaviour change)**: the code fence in `AGENTS.md` swallowed half the file
+  (the optional `claude plugin validate` comment now sits inside the block); the prose said "Gates 三列" in
+  five places while the validator and the template require four columns (gate name / assertion / counter-example
+  / absent), so all five now say 四列; the READMEs' install section stated token counts that had gone stale as
+  `SKILL.md` grew, and now state the loading model instead; `assets/prefs-template.md` declared a four-column
+  row format under a three-column header and carried one stray date cell; and `SKILL.md`'s self-check commands
+  gained the `<skill>/` path prefix the executor notes already use — both the §3.4 self-check **and** the §6
+  merge-gate line, which the first pass missed.
+
 ## [0.2.0] - 2026-09-19
 
 Breaking for conforming orders: an order must now declare its parallelism and a batch close

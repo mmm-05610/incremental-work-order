@@ -55,8 +55,8 @@ claude plugin marketplace add mmm-05610/incremental-work-order
 claude plugin install incremental-work-order@incremental-work-order
 ```
 
-`claude plugin details incremental-work-order` 会报 `Skills (1)`，常驻约 150 token、触发时约 1.9k；
-`claude plugin update incremental-work-order` 跟新版本。
+`claude plugin details incremental-work-order` 会报 `Skills (1)`。加载保持按需：常驻的只有名称与描述，
+触发时才加载完整 `SKILL.md`；`claude plugin update incremental-work-order` 跟新版本。
 
 **2. 安装脚本**——任何 agent，除 git 与 POSIX shell 外无依赖：
 
@@ -97,7 +97,7 @@ git clone --branch v0.2.0 https://github.com/mmm-05610/incremental-work-order ~/
 | --- | --- |
 | `SKILL.md` | 调度者的规则——整套模型都在这一个文本里 |
 | `GETTING-STARTED.md` | 给人看的上手（五步） |
-| `assets/work-order-template.md` | 工单骨架（JSON frontmatter、WHEN/THEN 场景、复选框 Stages、门三列） |
+| `assets/work-order-template.md` | 工单骨架（JSON frontmatter、WHEN/THEN 场景、复选框 Stages、门四列） |
 | `assets/worktree-charter-template.md` | 每棵树的章程（范围、写权、切片、批次） |
 | `assets/executor-charter.md` | 执行者纪律 |
 | `assets/executor-goal-prompt.md` | ≤15 行启动提示词 |
