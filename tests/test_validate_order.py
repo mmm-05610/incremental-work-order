@@ -9,6 +9,7 @@ No dependencies beyond the standard library.
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 import tempfile
@@ -345,3 +346,69 @@ class CrossChecks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class QueueDeclaration(unittest.TestCase):
+    """The optional queue.json: an overlap between two orders of one single-executor
+    queue must not fail, and a declaration that cannot be read must never silently
+    weaken the overlap check (that would be a false green in the guard itself)."""
+
+    def run_dir(self, files: dict[str, str], *extra: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                (Path(tmp) / name).write_text(text, encoding="utf-8")
+            return subprocess.run(
+                [sys.executable, str(VALIDATOR), tmp, *extra],
+                capture_output=True, text=True,
+            )
+
+    def overlapping_pair(self, second_paths: str) -> tuple[str, str]:
+        base = BASE.replace(
+            'write_paths: ["src/**"]', 'write_paths: ["src/**", "docs/implementation/status.md"]'
+        )
+        # the second order overlaps the first only through the shared bookkeeping path
+        other = (
+            BASE.replace("id: 001", "id: 002")
+            .replace("slug: probe", "slug: other")
+            .replace("batch: b1", "batch: b2")
+            .replace('write_paths: ["src/**"]', f"write_paths: {second_paths}")
+        )
+        return base, other
+
+    def test_shared_bookkeeping_overlap_is_exempted(self):
+        base, other = self.overlapping_pair('["other/**", "docs/implementation/status.md"]')
+        declaration = json.dumps({"single_executor": True, "shared_paths": ["docs/implementation/status.md"]})
+        result = self.run_dir({"001-probe.md": base, "002-other.md": other, "queue.json": declaration}, "--strict")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("exempted", result.stdout)
+        self.assertNotIn("declare `serialize_with`", result.stdout)
+
+    def test_unexpected_sharing_is_named_but_does_not_fail(self):
+        base, other = self.overlapping_pair('["src/parser/**"]')
+        declaration = json.dumps({"single_executor": True, "shared_paths": ["docs/implementation/status.md"]})
+        result = self.run_dir({"001-probe.md": base, "002-other.md": other, "queue.json": declaration}, "--strict")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NOTE:", result.stdout)
+        self.assertIn("src/**", result.stdout)
+
+    def test_without_the_declaration_the_old_rule_still_applies(self):
+        base, other = self.overlapping_pair('["other/**", "docs/implementation/status.md"]')
+        result = self.run_dir({"001-probe.md": base, "002-other.md": other}, "--strict")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("declare `serialize_with`", result.stdout)
+
+    def test_a_declaration_that_cannot_be_read_never_weakens_the_check(self):
+        base, other = self.overlapping_pair('["other/**", "docs/implementation/status.md"]')
+        cases = {
+            "not json": "{oops",
+            "not an object": "[]",
+            "missing single_executor": json.dumps({"shared_paths": ["src/**"]}),
+            "missing shared_paths": json.dumps({"single_executor": True}),
+            "single_executor false": json.dumps({"single_executor": False, "shared_paths": ["src/**"]}),
+        }
+        for label, declaration in cases.items():
+            with self.subTest(label=label):
+                # no --strict on purpose: an unreadable declaration must fail in every mode
+                result = self.run_dir({"001-probe.md": base, "002-other.md": other, "queue.json": declaration})
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("queue.json", result.stdout)

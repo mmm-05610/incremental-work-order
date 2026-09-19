@@ -287,6 +287,18 @@
         "Requires batched, one-line-decidable questions with a recommendation",
         "Says the scheduler decides what it can and does not interrupt per item"
       ]
+    },
+    {
+      "id": 29,
+      "prompt": "我们四条线每轮巡检都在报同一类硬失败：同一棵树里几乎每一对单都被判 write_paths 重叠，落点全是 docs/implementation/status.md 和 tests/**。真要撞车的信号被这些噪声淹了。怎么办？",
+      "expected_output": "Names the root cause rather than the symptom: one executor runs one queue's orders strictly serially, so an overlap between two orders of that queue cannot produce two writers, and the validator cannot see that from the orders alone. Points at the queue-level declaration instead of per-pair serialize_with or per-order edits: a queue.json next to the orders with single_executor true plus the shared_paths the queue expects to share. States the edges: covered overlaps are exempted with one summary line, uncovered overlaps stay visible as NOTE lines that never fail the run, a malformed or incomplete declaration is a hard failure in every mode, no file means no behaviour change, and cross-queue overlap still fails (validate two queues together in one directory without queue.json). Does not propose a new role, does not change the order template, and does not weaken the cross-queue guard.",
+      "expectations": [
+        "Explains that a single-executor queue cannot have two writers on one file, which is why the overlap is noise there",
+        "Prescribes one queue-level declaration (queue.json with single_executor and shared_paths), not per-pair serialize_with or per-order edits",
+        "Says uncovered overlaps stay visible as non-failing NOTE lines rather than being dropped silently",
+        "Says a declaration that cannot be read or is incomplete is a hard failure in every mode",
+        "Keeps the cross-queue guard: two queues validated together without queue.json must still fail"
+      ]
     }
   ]
 }
