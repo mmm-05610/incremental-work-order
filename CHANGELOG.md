@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for its skill contract: a breaking change is one that
 invalidates an existing order, charter or ledger, or that changes what a conforming order must contain.
 
+## [Unreleased]
+
+### Added
+
+- **`queue.json`: a single-executor queue declares its shared paths once.** One executor runs one
+  queue's orders strictly serially, so an overlap *between two orders of the same queue* cannot put
+  two writers on one file — but the validator cannot see that from the orders alone, and a queue
+  where every order necessarily writes its own `status.md` / `evidence/**` / `tests/**` drowns the
+  real signal. Measured on a live project: 22 and 37 hard failures inside two single queues, and 59
+  lines per cross-tree sweep, all of them bookkeeping. A queue now says it once, in a `queue.json`
+  next to its orders: `{"single_executor": true, "shared_paths": [...]}`. Overlaps covered by
+  `shared_paths` are exempted (one summary line); uncovered ones print a `NOTE` that never fails the
+  run, so unexpected sharing stays visible. A declaration that cannot be read, or that omits
+  `single_executor` / `shared_paths`, is a hard failure in every mode — a guard must never be
+  weakened by being unreadable. No file means no change at all, and cross-queue overlap still fails
+  (validate two queues together in one directory that carries no `queue.json`).
+
 ## [0.2.0] - 2026-09-19
 
 Breaking for conforming orders: an order must now declare its parallelism and a batch close

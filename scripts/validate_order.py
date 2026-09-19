@@ -38,7 +38,9 @@ Cross-checks (directory mode; hard failures under --strict, advisory otherwise):
   * `depends_on` entries resolving neither to an order in this set nor to a pinned
     external condition (a sha-looking token or a named tree)
   * `write_paths` overlap between two orders in the set — at least one side must
-    declare `serialize_with` (this is what keeps two parallel lines off one file)
+    declare `serialize_with` (this is what keeps two parallel lines off one file).
+    A queue that declares itself single-executor is exempt from this inside itself:
+    see "Queue declaration" below.
   * `--manifest <path>`: batch agreement with the manifest row for that id, and the
     manifest's document pointer must exist next to the manifest or the orders
 
@@ -50,6 +52,28 @@ Cross-checks (directory mode; hard failures under --strict, advisory otherwise):
   structural checks; the stage-checkbox gate still applies. The skill's rule: an
   order that is touched again (revised, re-dispatched, split) must be upgraded to
   the current template rather than staying legacy.
+
+Queue declaration (`queue.json`, optional, next to the orders — measured need
+2026-09-19): one executor runs one queue's orders strictly one after another, so an
+overlap *between two orders of the same queue* cannot put two writers on one file.
+The validator cannot know that from the orders alone, and a queue where every order
+necessarily writes the same bookkeeping paths (its own `status.md`, `evidence/**`,
+`tests/**`) drowns the real signal: measured on a live project, 22 and 37 hard
+failures per queue and 59 lines per cross-tree sweep, all of them bookkeeping. The
+queue says it once instead:
+
+    {"single_executor": true,
+     "shared_paths": ["docs/implementation/status.md", "tests/**"]}
+
+With that file present, an overlap between two orders of this set is not a hard
+failure. Overlaps covered by `shared_paths` are exempted (counted in one summary
+line); overlaps *not* covered are printed as `NOTE` lines that never fail the run,
+so unexpected sharing stays visible. A present-but-malformed declaration is a hard
+error in every mode — a guard that cannot be read must never silently downgrade
+another guard. Absent file = no change at all. **Cross-queue** overlap (two queues
+writing one file) is still a hard failure: validate two queues together in one
+directory that carries no `queue.json` (a union sandbox), and at least one side must
+declare `serialize_with`.
 
 Requires Python 3.7 or newer - the `from __future__ import annotations` at the top is a
 parse-time error on older interpreters (measured: 3.6 refuses the file outright).
@@ -370,9 +394,78 @@ def _declares_serialization(meta: dict, other_id: str) -> bool:
     return False
 
 
-def cross_checks(entries: list[tuple[Path, dict]], strict: bool) -> dict[str, list[str]]:
-    """Directory-level checks: id collisions, depends_on resolution, write_paths overlap."""
+QUEUE_DECLARATION = "queue.json"
+
+
+def _glob_matches(pattern: str, path: str) -> bool:
+    """Match one declared shared-path pattern against one overlapping write path.
+
+    `**` crosses directory separators, `*` and `?` do not, and the match is anchored:
+    a declared pattern has to cover the whole overlapping path, so a broader overlap
+    than the queue declared stays uncovered (and therefore visible).
+    """
+    regex = ""
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*":
+            if pattern[index : index + 2] == "**":
+                regex += ".*"
+                index += 2
+                continue
+            regex += "[^/]*"
+        elif char == "?":
+            regex += "[^/]"
+        else:
+            regex += re.escape(char)
+        index += 1
+    return re.fullmatch(regex, path) is not None
+
+
+def load_queue_declaration(orders_root: Path) -> tuple[dict | None, list[str]]:
+    """Read the optional ``queue.json`` sitting next to a queue's orders.
+
+    Absent file = no declaration, and the overlap check behaves exactly as before.
+    A present but malformed declaration is a hard problem in every mode: the one
+    thing a declaration must never do is weaken a guard by being unreadable.
+    """
+    path = orders_root / QUEUE_DECLARATION
+    if not path.exists():
+        return None, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, [
+            f"{QUEUE_DECLARATION}: unreadable or not valid JSON ({exc}) — a declaration that cannot be "
+            "read must fail rather than silently exempting overlaps"
+        ]
+    if not isinstance(data, dict):
+        return None, [f"{QUEUE_DECLARATION}: the top level must be an object"]
+    if data.get("single_executor") is not True:
+        return None, [
+            f'{QUEUE_DECLARATION}: `"single_executor": true` is the only declaration that changes the '
+            f'overlap check; found {data.get("single_executor")!r}'
+        ]
+    shared = data.get("shared_paths")
+    if not isinstance(shared, list) or not shared or not all(isinstance(s, str) and s.strip() for s in shared):
+        return None, [
+            f"{QUEUE_DECLARATION}: shared_paths must be a non-empty list of path patterns — without it the "
+            "declaration would exempt every path, not just the shared bookkeeping ones"
+        ]
+    return data, []
+
+
+def cross_checks(
+    entries: list[tuple[Path, dict]], strict: bool, declaration: dict | None = None
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Directory-level checks: id collisions, depends_on resolution, write_paths overlap.
+
+    Returns `(problems, notes)`. Notes never make the run fail: they are how a
+    single-executor queue keeps unexpected sharing visible after the noise from its
+    own bookkeeping paths has been exempted.
+    """
     problems: dict[str, list[str]] = {}
+    notes: list[str] = []
 
     def add(path: Path, message: str) -> None:
         problems.setdefault(str(path), []).append(message if strict else WARN + message)
@@ -414,6 +507,9 @@ def cross_checks(entries: list[tuple[Path, dict]], strict: bool) -> dict[str, li
                 "external condition (name the tree, tag or sha in `condition`)",
             )
 
+    single_executor = bool(declaration) and declaration.get("single_executor") is True
+    shared_patterns = [str(p) for p in declaration.get("shared_paths", [])] if single_executor else []
+    exempted = 0
     for index, (path_a, meta_a) in enumerate(live):
         for path_b, meta_b in live[index + 1:]:
             shared = overlapping_paths(meta_a.get("write_paths"), meta_b.get("write_paths"))
@@ -422,12 +518,32 @@ def cross_checks(entries: list[tuple[Path, dict]], strict: bool) -> dict[str, li
             id_a, id_b = str(meta_a.get("id")), str(meta_b.get("id"))
             if _declares_serialization(meta_a, id_b) or _declares_serialization(meta_b, id_a):
                 continue
+            if single_executor:
+                unexplained = sorted(
+                    path
+                    for path in shared
+                    if not any(_glob_matches(pattern, path) for pattern in shared_patterns)
+                )
+                if unexplained:
+                    notes.append(
+                        f"NOTE: {id_a} and {id_b} both declare {', '.join(unexplained)}, which "
+                        f"{QUEUE_DECLARATION} does not list as shared — one executor runs this queue strictly "
+                        "serially so this is not a failure, but unexpected sharing is worth a second look"
+                    )
+                else:
+                    exempted += 1
+                continue
             add(
                 path_a,
                 f"write_paths overlap with order {id_b} on {', '.join(sorted(shared))}: declare "
                 "`serialize_with` on one side (or re-slice) so two lines never edit one file at once",
             )
-    return problems
+    if exempted:
+        notes.append(
+            f"NOTE: `{QUEUE_DECLARATION}` declares this queue single_executor, so {exempted} write_paths overlap(s) "
+            "between its own orders were exempted (one executor, orders run serially); cross-queue overlap still fails"
+        )
+    return problems, notes
 
 
 def manifest_checks(entries: list[tuple[Path, dict]], manifest_path: Path, strict: bool) -> dict[str, list[str]]:
@@ -476,14 +592,26 @@ def main() -> int:
         print(f"no such path: {root}", file=sys.stderr)
         return 2
     if root.is_dir():
-        candidates = sorted((root / "work-orders").glob("*.md")) if (root / "work-orders").is_dir() else sorted(root.glob("*.md"))
+        orders_dir = root / "work-orders"
+        candidates = sorted(orders_dir.glob("*.md")) if orders_dir.is_dir() else sorted(root.glob("*.md"))
+        declaration_dirs = [orders_dir, root] if orders_dir.is_dir() else [root]
     else:
         candidates = [root]
+        declaration_dirs = [root]
     if not candidates:
         print(f"no order files under {root}", file=sys.stderr)
         return 2
 
     report: dict[str, list[str]] = {}
+    declaration: dict | None = None
+    for candidate_dir in declaration_dirs:
+        found, declaration_problems = load_queue_declaration(candidate_dir)
+        if declaration_problems:
+            report.setdefault(str(candidate_dir / QUEUE_DECLARATION), []).extend(declaration_problems)
+            break
+        if found is not None:
+            declaration = found
+            break
     entries: list[tuple[Path, dict]] = []
     for path in candidates:
         problems, meta = validate_one(path, args.strict, args.legacy_ok, args.batch)
@@ -496,7 +624,8 @@ def main() -> int:
         print(f"batch {args.batch}: no orders found", file=sys.stderr)
         return 1
 
-    for key, problems in cross_checks(entries, args.strict).items():
+    cross_problems, notes = cross_checks(entries, args.strict, declaration)
+    for key, problems in cross_problems.items():
         report.setdefault(key, []).extend(problems)
     if args.manifest:
         for key, problems in manifest_checks(entries, Path(args.manifest), args.strict).items():
@@ -508,7 +637,7 @@ def main() -> int:
         fatal = fatal or bool(hard)
 
     if args.json:
-        print(json.dumps({"batch": args.batch, "orders": report, "ok": not fatal}, ensure_ascii=False, indent=2))
+        print(json.dumps({"batch": args.batch, "orders": report, "notes": notes, "ok": not fatal}, ensure_ascii=False, indent=2))
     else:
         for path, problems in report.items():
             if not problems:
@@ -518,6 +647,8 @@ def main() -> int:
             print(f"{'FAIL' if hard else 'WARN'} {path}")
             for problem in problems:
                 print(f"     - {problem}")
+        for note in notes:
+            print(note)
     return 1 if fatal else 0
 
 
