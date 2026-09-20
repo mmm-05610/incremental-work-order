@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for its skill contract: a breaking change is one that
 invalidates an existing order, charter or ledger, or that changes what a conforming order must contain.
 
-## [Unreleased]
+## [0.3.0] - 2026-09-20
 
 ### Added
 

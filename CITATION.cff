@@ -7,8 +7,8 @@ abstract: >-
   stops, and merges back are approval-gated and re-verified on the main tree. It ships the rules, templates, a
   structural validator, an anti-false-green checklist and behavioural eval cases.
 type: software
-version: 0.2.0
-date-released: "2026-09-19"
+version: 0.3.0
+date-released: "2026-09-20"
 license: MIT
 repository-code: "https://github.com/mmm-05610/incremental-work-order"
 url: "https://github.com/mmm-05610/incremental-work-order"

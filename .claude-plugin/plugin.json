@@ -1,6 +1,6 @@
 {
   "name": "incremental-work-order",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Dispatch long-running agent work through repository-backed work orders: one main tree schedules, each sub-tree executes its own slice, batches produce git checkpoints that never stop the executor, and every gate must be shown to fail.",
   "author": {
     "name": "mmm-05610",
